@@ -74,7 +74,13 @@ button:hover {
 // HILFSFUNKTIONEN
 // -----------------------------------------------------------
 
-// 1. Escape-LaTeX-Sonderzeichen (außer $)
+// Leere Zeilen und Zeilenumbrüche sollen \\ bekommen,
+// aber NICHT nach Block-Math ($$ ... $$)
+function isBlockMathLine(line) {
+    return line.trim().startsWith("$$") && line.trim().endsWith("$$");
+}
+
+// Escape-LaTeX-Sonderzeichen
 function escapeLatex(text) {
     const replacements = {
         "\\": "\\textbackslash{}",
@@ -86,70 +92,46 @@ function escapeLatex(text) {
         "_": "\\_", 
         "^": "\\textasciicircum{}",
         "~": "\\textasciitilde{}",
-        "'": "\\textquotesingle{}" // Maskiert das gerade Apostroph (') im Fließtext
+        "'": "\\textquotesingle{}"
     };
     return text.replace(/([\\{}&%#_^~'])/g, m => replacements[m] || m);
 }
 
-// 2. Inline Markdown-Stile anwenden
+// Inline Markdown-Stile
 function applyInlineStyles(text) {
-    // 1. __Unterstrichen__
     text = text.replace(/__(.+?)__/g, '%%START_U%%$1%%END_U%%');
-
-    // 2. _Kursiv_
     text = text.replace(/_(?!_)(.+?)_(?!_)/g, '%%START_I%%$1%%END_I%%');
 
-    // 3. Nun den Rest des Textes maskieren.
     text = escapeLatex(text);
-    
-    // 4. Temporäre Platzhalter wieder in LaTeX-Befehle umwandeln.
+
     text = text.replace(/%%START_U%%(.+?)%%END_U%%/g, "\\underline{$1}");
     text = text.replace(/%%START_I%%(.+?)%%END_I%%/g, "\\textit{$1}");
-    
-    // 5. *Fett*
+
     text = text.replace(/(?<!\*)\*(?!\*)([^*]+)(?<!\*)\*(?!\*)/g, "\\textbf{$1}"); 
-    
-    // 6. `Code` 
     text = text.replace(/`([^`]+)`/g, "\\texttt{$1}");
 
     return text;
 }
 
-// 4. Prime-Ersetzung (NEUE LOGIK: Längere Ketten zuerst)
+// Prime-Ersetzung (Mathemodus)
 function replacePrimes(mathContent) {
-    // Kombinierte Regex: Sucht nach 3, 2, oder 1 Apostroph(e)
-    // Die Ersetzung muss sequenziell (lang nach kurz) erfolgen.
-    
-    // 1. DREI Apostrophe (z.B. f'''(x) -> ^{\prime\prime\prime})
     mathContent = mathContent.replace(/['’]{3}/g, '^{\\prime\\prime\\prime}');
-    
-    // 2. ZWEI Apostrophe (z.B. f''(x) -> ^{\prime\prime})
     mathContent = mathContent.replace(/['’]{2}/g, '^{\\prime\\prime}');
-    
-    // 3. EIN Apostroph (z.B. f'(x) -> ^{\prime})
     mathContent = mathContent.replace(/['’]/g, '^{\\prime}');
-
     return mathContent;
 }
 
-
-// 3. Hauptfunktion: Textverarbeitung mit Math-Erkennung
+// Mathe erkennen und verarbeiten
 function processTextWithMath(text) {
-    // Teilt den Text anhand von Inline-Mathematikumgebungen ($...$)
     const parts = text.split(/(\$[^\$]+\$)/g);
     let processedText = '';
     
     for (const part of parts) {
         if (part.startsWith('$') && part.endsWith('$') && part.length > 1) {
-            // Inline Mathe-Umgebung: Inhalt extrahieren
             let mathContent = part.slice(1, -1); 
-            
-            // Prime-Ersetzung
             mathContent = replacePrimes(mathContent); 
-            
             processedText += '$' + mathContent + '$';
         } else {
-            // Normaler Text: Anwendung der Inline-Styles, welche Escaping beinhaltet.
             processedText += applyInlineStyles(part);
         }
     }
@@ -157,7 +139,7 @@ function processTextWithMath(text) {
 }
 
 // -----------------------------------------------------------
-// HAUPT-KONVERTER
+// HAUPTKONVERTER
 // -----------------------------------------------------------
 function convertMarkdown(md) {
     const lines = md.split("\n");
@@ -171,7 +153,6 @@ function convertMarkdown(md) {
             const joinedText = paragraph.join(" ").trim();
             if (joinedText.length > 0) { 
                 out.push(joinedText);
-                out.push(""); 
             }
             paragraph = [];
         }
@@ -182,83 +163,73 @@ function convertMarkdown(md) {
         if (inEnumerate) { out.push("\\end{enumerate}"); inEnumerate = false; }
     };
 
-
     for (let line of lines) {
         const trimmedLine = line.trim();
 
-        // 1. Block-Mathematik: $$...$$ 
+        // Block-Mathe $$...$$
         if (trimmedLine.startsWith('$$') && trimmedLine.endsWith('$$')) {
             flushParagraph();
             closeLists();
-            
-            // Block-Math: Inhalt extrahieren
             let mathContent = trimmedLine.substring(2, trimmedLine.length - 2).trim();
-            
-            // Prime-Ersetzung (mit der neuen Logik)
             mathContent = replacePrimes(mathContent); 
-            
-            out.push('$$ ' + mathContent + ' $$'); 
-            out.push("");
+            out.push('$$ ' + mathContent + ' $$');
             continue;
         }
 
-        // 2. Überschriften (H1-H4)
+        // Überschriften
         if (/^#{1,4}\s/.test(trimmedLine)) {
             flushParagraph();
             closeLists();
             let match = trimmedLine.match(/^(#+)/);
             let level = match ? match[1].length : 0; 
-
             let text = trimmedLine.replace(/^#+\s*/, "");
             text = processTextWithMath(text);
             if (level === 1) out.push("\\section{" + text + "}");
             if (level === 2) out.push("\\subsection{" + text + "}");
             if (level === 3) out.push("\\subsubsection{" + text + "}");
             if (level === 4) out.push("\\paragraph{" + text + "}");
-            out.push("");
             continue;
         }
 
-        // 3. Ungeordnete Liste
+        // Ungeordnete Liste
         if (/^\s*[*+-]\s+/.test(line)) {
             flushParagraph();
-            if (inEnumerate) { closeLists(); } 
+            if (inEnumerate) closeLists();
             if (!inItemize) {
                 inItemize = true;
                 out.push("\\begin{itemize}");
             }
-            let item = line.replace(/^\s*[*+-]\s+/, "");
-            item = processTextWithMath(item);
+            let item = processTextWithMath(line.replace(/^\s*[*+-]\s+/, ""));
             out.push("\\item " + item);
             continue;
-        } 
+        }
 
-        // 4. Geordnete Liste
+        // Geordnete Liste
         if (/^\s*\d+\.\s+/.test(line)) {
             flushParagraph();
-            if (inItemize) { closeLists(); } 
+            if (inItemize) closeLists();
             if (!inEnumerate) {
                 inEnumerate = true;
                 out.push("\\begin{enumerate}");
             }
-            let item = line.replace(/^\s*\d+\.\s+/, "");
-            item = processTextWithMath(item);
+            let item = processTextWithMath(line.replace(/^\s*\d+\.\s+/, ""));
             out.push("\\item " + item);
             continue;
-        } 
-        
-        // 5. Leerzeile oder Listenende
+        }
+
+        // Leere Zeile
         if (trimmedLine === "") {
             flushParagraph();
             closeLists();
+            out.push(""); 
             continue;
         }
-        
-        // 6. Normaler Text
+
+        // Normaler Text
         if (!inItemize && !inEnumerate) {
             line = processTextWithMath(line);
             if (line.trim().length > 0) {
-                 paragraph.push(line);
+                paragraph.push(line);
             }
         }
     }
@@ -266,39 +237,51 @@ function convertMarkdown(md) {
     flushParagraph();
     closeLists();
 
-    while (out[out.length - 1] === "") {
-        out.pop();
+    // -------------------------------------------------------
+    // NEUE LOGIK: Jede Zeile bekommt \\ , außer nach $$...$$
+    // -------------------------------------------------------
+    let finalOut = [];
+
+    for (let i = 0; i < out.length; i++) {
+        const line = out[i];
+
+        if (line.trim() === "") {
+            finalOut.push("\\\\");
+            continue;
+        }
+
+        finalOut.push(line);
+
+        if (!isBlockMathLine(line)) {
+            finalOut.push("\\\\");
+        }
     }
 
-    return out.join("\n").trim();
+    // Letzte doppelte Backslash entfernen
+    while (finalOut[finalOut.length - 1] === "\\\\") finalOut.pop();
+
+    return finalOut.join("\n");
 }
 
 // -----------------------------------------------------------
-// EREIGNIS-HANDLER
+// EVENTS
 // -----------------------------------------------------------
-
 document.getElementById("mdInput").addEventListener("input", () => {
-    const md = document.getElementById("mdInput").value;
-    document.getElementById("latexOutput").value = convertMarkdown(md);
+    document.getElementById("latexOutput").value = convertMarkdown(
+        document.getElementById("mdInput").value
+    );
 });
 
 document.addEventListener("DOMContentLoaded", () => {
-    const md = document.getElementById("mdInput").value;
-    document.getElementById("latexOutput").value = convertMarkdown(md);
+    document.getElementById("latexOutput").value = convertMarkdown(
+        document.getElementById("mdInput").value
+    );
 });
-
 
 document.getElementById("copyBtn").addEventListener("click", () => {
     const outputField = document.getElementById("latexOutput");
-    const text = outputField.value;
-
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(outputField.value).then(() => {
         document.getElementById("copyBtn").textContent = "Kopiert!";
-        setTimeout(() => {
-            document.getElementById("copyBtn").textContent = "LaTeX-Code kopieren";
-        }, 1200);
-    }).catch(err => {
-        document.getElementById("copyBtn").textContent = "Kopieren fehlgeschlagen!";
         setTimeout(() => {
             document.getElementById("copyBtn").textContent = "LaTeX-Code kopieren";
         }, 1200);
